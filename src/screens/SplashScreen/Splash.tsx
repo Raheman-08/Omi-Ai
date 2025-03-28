@@ -11,7 +11,7 @@ const Splash = () => {
         index: 0,
         routes: [{ name: 'Onboarding' as never }],
       });
-    }, 3000);
+    }, 2000);
   }, []);
   
   return (

@@ -74,7 +74,7 @@ const Verified = ({navigation}: {navigation: any}) => {
         <Animated.View style={[styles.buttonContainer, { opacity: opacityAnim }]}>
           <Button 
             text="Start chatting!"
-            onPress={() => {}}
+            onPress={() => navigation.navigate('Bottom')}
             style={styles.chatButton}
             textStyle={styles.buttonText}
           />
