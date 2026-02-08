@@ -1,6 +1,6 @@
 import React from 'react';
-import {createNativeStackNavigator} from '@react-navigation/native-stack';
-import {NavigationContainer} from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { NavigationContainer } from '@react-navigation/native';
 import Splash from '../screens/SplashScreen/Splash';
 import Onboard from '../screens/Onboarding/Onboard';
 import Cloning from '../screens/Onboarding/Cloning';
@@ -10,9 +10,27 @@ import Signin from '../screens/Auth/Signin';
 import Personalise from '../screens/Personalisation/Personalise';
 import Home from '../screens/Homescreen/Home';
 import Explore from '../screens/Explorescreen/Explore';
+import AppDetails from '../screens/Explorescreen/AppDetails';
 import Chat from '../screens/Chatscreen/Chat';
 import BottomNavigation from './BottomNavigation';
-const Stack = createNativeStackNavigator();
+import type { AppDetailsParams } from '../screens/Explorescreen/AppDetails';
+
+export type RootStackParamList = {
+  Splash: undefined;
+  Onboarding: undefined;
+  Cloning: undefined;
+  Verify: undefined;
+  VerifySuccess: undefined;
+  Signin: undefined;
+  Personalise: undefined;
+  Home: undefined;
+  Chat: undefined;
+  Explore: undefined;
+  Bottom: undefined;
+  AppDetails: AppDetailsParams;
+};
+
+const Stack = createNativeStackNavigator<RootStackParamList>();
 
 const StackNavigation = () => {
   return (
@@ -29,7 +47,8 @@ const StackNavigation = () => {
         <Stack.Screen name="Personalise" component={Personalise} />
         <Stack.Screen name="Home" component={Home} />
         <Stack.Screen name="Chat" component={Chat} />
-        <Stack.Screen name="Explore" component={Explore} /> 
+        <Stack.Screen name="Explore" component={Explore} />
+        <Stack.Screen name="AppDetails" component={AppDetails} />
         <Stack.Screen name="Bottom" component={BottomNavigation} />
       </Stack.Navigator>
     </NavigationContainer>

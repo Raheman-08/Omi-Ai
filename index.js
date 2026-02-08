@@ -1,9 +1,9 @@
 /**
  * @format
+ * First line: set global.require for Hermes/SDK 53.
  */
-
-import {AppRegistry} from 'react-native';
-import App from './App';
-import {name as appName} from './app.json';
-
-AppRegistry.registerComponent(appName, () => App);
+require('./metro-require-shim.js');
+require('react-native-url-polyfill/auto');
+const { registerRootComponent } = require('expo');
+const App = require('./App').default;
+registerRootComponent(App);

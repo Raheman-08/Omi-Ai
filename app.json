@@ -1,4 +1,22 @@
 {
-  "name": "OmiAi",
-  "displayName": "OmiAi"
+  "expo": {
+    "name": "OmiAi",
+    "displayName": "OmiAi",
+    "slug": "omi-ai",
+    "version": "0.0.1",
+    "scheme": "omiai",
+    "icon": "./assets/icon.png",
+    "plugins": [
+      "@react-native-google-signin/google-signin",
+      "expo-location",
+      ["expo-notifications", { "icon": "./assets/icon.png" }]
+    ],
+    "android": {
+      "googleServicesFile": "./android/google-services.json"
+    },
+    "ios": {
+      "googleServicesFile": "./ios/GoogleService-Info.plist",
+      "bundleIdentifier": "com.raheman08.omi-ai"
+    }
+  }
 }

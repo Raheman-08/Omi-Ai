@@ -1,0 +1,12 @@
+diff --git a/node_modules/metro-runtime/src/polyfills/require.js b/node_modules/metro-runtime/src/polyfills/require.js
+index 5cbacc0..f22e91c 100644
+--- a/node_modules/metro-runtime/src/polyfills/require.js
++++ b/node_modules/metro-runtime/src/polyfills/require.js
+@@ -1,6 +1,7 @@
+ "use strict";
+ 
+ global.__r = metroRequire;
++global.require = metroRequire;
+ global[`${__METRO_GLOBAL_PREFIX__}__d`] = define;
+ global.__c = clear;
+ global.__registerSegment = registerSegment;

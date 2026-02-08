@@ -7,7 +7,7 @@ import {
   TouchableOpacity,
   ImageSourcePropType,
 } from 'react-native';
-import Icon from 'react-native-vector-icons/Feather';
+import { Feather } from '@expo/vector-icons';
 
 interface AppCardProps {
   appIcon: ImageSourcePropType;
@@ -33,7 +33,7 @@ const AppCard = ({
   const renderRating = () => (
     <View style={styles.ratingContainer}>
       <Text style={styles.rating}>{rating}</Text>
-      <Icon name="star" size={12} color="#7C3AED" style={styles.starIcon} />
+      <Feather name="star" size={12} color="#7C3AED" style={styles.starIcon} />
       <Text style={styles.reviews}>({reviews})</Text>
     </View>
   );
@@ -68,7 +68,7 @@ const AppCard = ({
         {rating !== undefined && reviews !== undefined && renderRating()}
       </View>
       {showExpandIcon && (
-        <Icon name="chevron-down" size={24} color="rgba(255,255,255,0.5)" />
+        <Feather name="chevron-down" size={24} color="rgba(255,255,255,0.5)" />
       )}
     </TouchableOpacity>
   );

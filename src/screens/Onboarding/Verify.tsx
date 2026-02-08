@@ -1,6 +1,6 @@
 import { SafeAreaView, StyleSheet, Text, View, TouchableOpacity, Image, StatusBar } from 'react-native'
 import React from 'react'
-import LinearGradient from 'react-native-linear-gradient'
+import { LinearGradient } from 'expo-linear-gradient'
 import Button from '../../components/Button'
 
 const Verify = ({navigation}: {navigation: any}) => {

@@ -20,7 +20,7 @@ const Onboard = ({navigation}: {navigation: any}) => {
           <Text style={styles.title}>Get Started with Omi AI</Text>
           
           <View style={styles.buttonContainer}>
-            <Button text="Get Started" onPress={() => navigation.navigate('Cloning')} textStyle={styles.getStartedText} style={styles.signInButton} /> 
+            <Button text="Get Started" onPress={() => navigation.navigate('Signin')} textStyle={styles.getStartedText} style={styles.signInButton} /> 
             
             <Button text="Sign In" onPress={() => navigation.navigate('Signin')} textStyle={styles.signInText} /> 
           </View>

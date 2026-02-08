@@ -11,7 +11,7 @@ import {
   Image,
 } from 'react-native';
 import React, {useState, useEffect} from 'react';
-import LinearGradient from 'react-native-linear-gradient';
+import { LinearGradient } from 'expo-linear-gradient';
 import Button from '../../components/Button';
 const {width} = Dimensions.get('window');
 

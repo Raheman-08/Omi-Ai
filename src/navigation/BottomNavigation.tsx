@@ -3,7 +3,7 @@ import { View, Text, TouchableOpacity, StyleSheet, Dimensions, Platform, Animate
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { NavigationHelpers, ParamListBase, TabNavigationState } from '@react-navigation/native';
-import LinearGradient from 'react-native-linear-gradient';
+import { LinearGradient } from 'expo-linear-gradient';
 import Home from '../screens/Homescreen/Home';
 import Chat from '../screens/Chatscreen/Chat';
 import Explore from '../screens/Explorescreen/Explore';
@@ -13,9 +13,9 @@ const HomeScreen = () => <Home />;
 const ChatScreen = () => <Chat />;
 const ExploreScreen = () => <Explore />;
 
-type TabParamList = {
+export type TabParamList = {
   Home: undefined;
-  Chat: undefined;
+  Chat: { conversationId?: string };
   Explore: undefined;
 };
 

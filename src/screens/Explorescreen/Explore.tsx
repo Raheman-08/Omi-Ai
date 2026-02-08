@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   StyleSheet,
   Text,
@@ -8,99 +8,110 @@ import {
   TextInput,
   TouchableOpacity,
   ScrollView,
+  ActivityIndicator,
+  RefreshControl,
 } from 'react-native';
-import LinearGradient from 'react-native-linear-gradient';
-import Icon from 'react-native-vector-icons/Feather';
+import { useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { LinearGradient } from 'expo-linear-gradient';
+import { Feather } from '@expo/vector-icons';
 import AppCard from '../../components/AppCard';
+import { getPopularApps, getAppsSearch, appImageUrl } from '../../api/apps';
+import type { ServerApp } from '../../api/types';
+import type { RootStackParamList } from '../../navigation/StackNavigation';
 
-// Default placeholder image
 const placeholderImage = require('../../assets/images/placeholder.jpg');
 
-// Sample app data
-const popularApps = [
-  {
-    id: '1',
-    title: 'Google Drive',
-    category: 'Productivity And Organization',
-    rating: 4.9,
-    reviews: 9,
-    appIcon: placeholderImage,
-  },
-  {
-    id: '2',
-    title: 'Omi Mentor',
-    category: 'Productivity And Organization',
-    rating: 4.5,
-    reviews: 8,
-    appIcon: placeholderImage,
-  },
-  {
-    id: '3',
-    title: 'Translator',
-    category: 'Utilities And Tools',
-    rating: 4.4,
-    reviews: 13,
-    appIcon: placeholderImage,
-  },
-  {
-    id: '4',
-    title: 'Lie Detector Pro',
-    category: 'Conversation Analysis',
-    rating: 5.0,
-    reviews: 4,
-    appIcon: placeholderImage,
-  },
-  {
-    id: '5',
-    title: 'KOL - The Girlfriend Retainer',
-    category: 'Social And Relationships',
-    rating: 4.3,
-    reviews: 16,
-    appIcon: placeholderImage,
-  },
-  {
-    id: '6',
-    title: 'Programming Duck',
-    category: 'Education And Learning',
-    rating: 5.0,
-    reviews: 4,
-    appIcon: placeholderImage,
-  },
-];
-
-const allApps = [
-  {
-    id: '1',
-    title: 'Google Drive',
-    category: 'Connect to Google Drive. Automatically sync OMI Memories and/or Transcripts',
-    rating: 4.9,
-    reviews: 9,
-    appIcon: placeholderImage,
-  },
-  {
-    id: '2',
-    title: 'Omi Translator',
-    category: 'Translate to the language you want! Using LLM to translate texts mentioned!',
-    rating: 4.4,
-    reviews: 13,
-    appIcon: placeholderImage,
-  },
-];
-
 const Explore = () => {
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const [searchQuery, setSearchQuery] = useState('');
+  const [popularApps, setPopularApps] = useState<ServerApp[]>([]);
+  const [allApps, setAllApps] = useState<ServerApp[]>([]);
+  const [loadingPopular, setLoadingPopular] = useState(true);
+  const [loadingAll, setLoadingAll] = useState(true);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadPopular = useCallback(async () => {
+    setLoadingPopular(true);
+    setError(null);
+    try {
+      const list = await getPopularApps();
+      setPopularApps(list);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load popular apps');
+      setPopularApps([]);
+    } finally {
+      setLoadingPopular(false);
+    }
+  }, []);
+
+  const loadAllApps = useCallback(async (q?: string) => {
+    if (q !== undefined) setSearchLoading(!!q?.trim());
+    else setLoadingAll(true);
+    setError(null);
+    try {
+      const { data } = await getAppsSearch({
+        q: q?.trim() || undefined,
+        limit: 50,
+        offset: 0,
+      });
+      if (q !== undefined) {
+        setAllApps(data);
+      } else {
+        setAllApps(data);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load apps');
+      setAllApps([]);
+    } finally {
+      if (q !== undefined) setSearchLoading(false);
+      else setLoadingAll(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadPopular();
+  }, [loadPopular]);
+
+  useEffect(() => {
+    loadAllApps();
+  }, [loadAllApps]);
+
+  useEffect(() => {
+    if (!searchQuery.trim()) {
+      loadAllApps();
+      return;
+    }
+    const t = setTimeout(() => loadAllApps(searchQuery), 400);
+    return () => clearTimeout(t);
+  }, [searchQuery, loadAllApps]);
+
+  const onRefresh = useCallback(() => {
+    loadPopular();
+    loadAllApps(searchQuery.trim() || undefined);
+  }, [loadPopular, loadAllApps, searchQuery]);
+
+  const appIcon = (app: ServerApp) => {
+    const uri = app.image ? appImageUrl(app) : '';
+    return uri ? { uri } : placeholderImage;
+  };
+
+  const openAppDetails = (app: ServerApp) => {
+    navigation.navigate('AppDetails', { appId: app.id, app });
+  };
 
   const renderHeader = () => (
     <View style={styles.header}>
       <TouchableOpacity style={styles.menuButton}>
         <View style={styles.loadingIcon}>
-          <Icon name="loader" size={20} color="#FFFFFF" />
+          <Feather name="loader" size={20} color="#FFFFFF" />
         </View>
       </TouchableOpacity>
       <Text style={styles.headerTitle}>Explore</Text>
       <TouchableOpacity style={styles.profileButton}>
         <View style={styles.profileIcon}>
-          <Icon name="user" size={20} color="#FFFFFF" />
+          <Feather name="user" size={20} color="#FFFFFF" />
         </View>
       </TouchableOpacity>
     </View>
@@ -109,7 +120,7 @@ const Explore = () => {
   const renderSearchBar = () => (
     <View style={styles.searchContainer}>
       <TouchableOpacity style={styles.filterButton}>
-        <Icon name="filter" size={18} color="#FFFFFF" />
+        <Feather name="filter" size={18} color="#FFFFFF" />
         <Text style={styles.filterText}>Filter</Text>
       </TouchableOpacity>
       <View style={styles.searchInputContainer}>
@@ -126,7 +137,7 @@ const Explore = () => {
 
   const renderCreateCard = () => (
     <TouchableOpacity style={styles.createCard} activeOpacity={0.7}>
-      <Icon name="plus" size={24} color="#FFFFFF" />
+      <Feather name="plus" size={24} color="#FFFFFF" />
       <Text style={styles.createText}>Create your own</Text>
     </TouchableOpacity>
   );
@@ -145,34 +156,70 @@ const Explore = () => {
           style={styles.scrollView}
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={loadingPopular && loadingAll && !searchLoading}
+              onRefresh={onRefresh}
+              tintColor="rgba(255,255,255,0.7)"
+            />
+          }
         >
           {renderCreateCard()}
           <Text style={styles.sectionTitle}>Popular Apps</Text>
-          <View style={styles.popularAppsContainer}>
-            {popularApps.map(app => (
-              <AppCard
-                key={app.id}
-                appIcon={app.appIcon}
-                title={app.title}
-                category={app.category}
-                rating={app.rating}
-                reviews={app.reviews}
-                isPopularApp
-              />
-            ))}
-          </View>
+          {error && !loadingPopular ? (
+            <View style={styles.errorRow}>
+              <Text style={styles.errorText}>{error}</Text>
+              <TouchableOpacity onPress={onRefresh}>
+                <Text style={styles.retryText}>Tap to retry</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
+          {loadingPopular ? (
+            <View style={styles.loadingRow}>
+              <ActivityIndicator size="small" color="rgba(255,255,255,0.7)" />
+              <Text style={styles.loadingText}>Loading popular apps…</Text>
+            </View>
+          ) : (
+            <View style={styles.popularAppsContainer}>
+              {popularApps.map((app) => (
+                <AppCard
+                  key={app.id}
+                  appIcon={appIcon(app)}
+                  title={app.name}
+                  category={app.category ?? 'App'}
+                  rating={app.rating_avg}
+                  reviews={app.rating_count ?? 0}
+                  isPopularApp
+                  onPress={() => openAppDetails(app)}
+                />
+              ))}
+            </View>
+          )}
           <Text style={styles.sectionTitle}>All Apps</Text>
-          {allApps.map(app => (
-            <AppCard
-              key={app.id}
-              appIcon={app.appIcon}
-              title={app.title}
-              category={app.category}
-              rating={app.rating}
-              reviews={app.reviews}
-              showExpandIcon
-            />
-          ))}
+          {searchLoading || loadingAll ? (
+            <View style={styles.loadingRow}>
+              <ActivityIndicator size="small" color="rgba(255,255,255,0.7)" />
+              <Text style={styles.loadingText}>{searchQuery.trim() ? 'Searching…' : 'Loading apps…'}</Text>
+            </View>
+          ) : (
+            <>
+              {allApps.map((app) => (
+                <AppCard
+                  key={app.id}
+                  appIcon={appIcon(app)}
+                  title={app.name}
+                  category={app.description ?? app.category ?? 'App'}
+                  rating={app.rating_avg}
+                  reviews={app.rating_count ?? 0}
+                  showExpandIcon
+                  onPress={() => openAppDetails(app)}
+                />
+              ))}
+              {allApps.length === 0 && !error ? (
+                <Text style={styles.emptyText}>No apps found</Text>
+              ) : null}
+            </>
+          )}
         </ScrollView>
       </View>
     </SafeAreaView>
@@ -288,6 +335,35 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#FFFFFF',
     marginBottom: 16,
+  },
+  errorRow: {
+    paddingVertical: 12,
+    marginBottom: 16,
+  },
+  errorText: {
+    color: 'rgba(255,255,255,0.9)',
+    fontSize: 14,
+  },
+  retryText: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 14,
+    marginTop: 8,
+  },
+  loadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 16,
+    marginBottom: 8,
+  },
+  loadingText: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 14,
+    marginLeft: 12,
+  },
+  emptyText: {
+    color: 'rgba(255,255,255,0.5)',
+    fontSize: 15,
+    paddingVertical: 24,
   },
 });
 
