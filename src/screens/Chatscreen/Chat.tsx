@@ -1,9 +1,8 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
   StyleSheet,
   Text,
   View,
-  SafeAreaView,
   StatusBar,
   TextInput,
   TouchableOpacity,
@@ -13,14 +12,13 @@ import {
   Animated,
   ActivityIndicator,
 } from 'react-native';
-import { useRoute, RouteProp } from '@react-navigation/native';
-import { LinearGradient } from 'expo-linear-gradient';
+import { useRoute } from '@react-navigation/native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { BottomSheetModal, BottomSheetView } from '@gorhom/bottom-sheet';
 import { Feather } from '@expo/vector-icons';
-import { useOmiDeviceContext } from '../../context/OmiDeviceContext';
 import { hasValidToken } from '../../api/authStore';
 import { getMessages, sendMessage as sendMessageApi } from '../../api/messages';
 import type { ServerMessage } from '../../api/types';
-import type { TabParamList } from '../../navigation/BottomNavigation';
 
 interface Message {
   id: string;
@@ -61,9 +59,8 @@ function serverToMessage(m: ServerMessage, index?: number): Message {
 }
 
 const Chat = () => {
-  const route = useRoute<RouteProp<TabParamList, 'Chat'>>();
-  const conversationId = route.params?.conversationId ?? null;
-  const { isConnected } = useOmiDeviceContext();
+  const route = useRoute();
+  const conversationId = (route.params as { conversationId?: string } | undefined)?.conversationId ?? null;
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState<Message[]>(FALLBACK_MESSAGES);
   const [loading, setLoading] = useState(false);
@@ -72,6 +69,10 @@ const Chat = () => {
 
   const scrollViewRef = useRef<ScrollView>(null);
   const fadeAnim = useRef(new Animated.Value(0)).current;
+  const attachmentSheetRef = useRef<BottomSheetModal>(null);
+  const insets = useSafeAreaInsets();
+
+  const attachmentSnapPoints = useMemo(() => ['28%'], []);
 
   const loadMessages = useCallback(async () => {
     if (!hasValidToken()) return;
@@ -137,25 +138,15 @@ const Chat = () => {
 
   const renderHeader = () => (
     <View style={styles.header}>
-      <TouchableOpacity style={styles.menuButton}>
-        <View style={styles.loadingIcon}>
-          <Feather name="loader" size={20} color="#FFFFFF" />
-        </View>
+      <TouchableOpacity style={styles.headerIconButton} activeOpacity={0.7}>
+        <Feather name="sun" size={22} color="#FFFFFF" />
       </TouchableOpacity>
-      <View style={styles.titleContainer}>
+      <TouchableOpacity style={styles.titleRow} activeOpacity={0.8}>
         <Text style={styles.titleText}>Omi</Text>
-        {isConnected && (
-          <View style={styles.connectedBadge}>
-            <Feather name="bluetooth" size={12} color="rgba(76,217,100,0.9)" />
-            <Text style={styles.connectedBadgeText}>Device</Text>
-          </View>
-        )}
-        <Feather name="chevron-down" size={20} color="#FFFFFF" style={styles.titleIcon} />
-      </View>
-      <TouchableOpacity style={styles.profileButton}>
-        <View style={styles.profileIcon}>
-          <Feather name="user" size={20} color="#FFFFFF" />
-        </View>
+        <Feather name="chevron-down" size={18} color="#FFFFFF" style={styles.titleChevron} />
+      </TouchableOpacity>
+      <TouchableOpacity style={styles.headerIconButton} activeOpacity={0.7}>
+        <Feather name="user" size={22} color="#FFFFFF" />
       </TouchableOpacity>
     </View>
   );
@@ -163,58 +154,101 @@ const Chat = () => {
   const renderMessage = (message: Message, index: number) => (
     <View
       key={message.id || `msg-${index}`}
-      style={[
-        styles.messageContainer,
-        message.isUser ? styles.userMessage : styles.botMessage,
-      ]}
+      style={[styles.messageWrap, message.isUser ? styles.messageWrapUser : styles.messageWrapBot]}
     >
-      <View style={[
-        styles.messageBubble,
-        message.isUser ? styles.userBubble : styles.botBubble,
-      ]}>
-        <Text style={styles.messageText}>{message.text}</Text>
+      <View style={[styles.bubble, message.isUser ? styles.bubbleUser : styles.bubbleBot]}>
+        <Text style={styles.bubbleText}>{message.text}</Text>
       </View>
-      <Text style={[
-        styles.timestamp,
-        message.isUser ? styles.userTimestamp : styles.botTimestamp
-      ]}>
+      <Text style={[styles.bubbleTime, message.isUser ? styles.bubbleTimeUser : styles.bubbleTimeBot]}>
         {message.timestamp || ' '}
       </Text>
     </View>
   );
 
+  const openAttachmentSheet = useCallback(() => {
+    attachmentSheetRef.current?.present();
+  }, []);
+
+  const closeAttachmentSheet = useCallback(() => {
+    attachmentSheetRef.current?.dismiss();
+  }, []);
+
+  const handleTakePhoto = () => {
+    closeAttachmentSheet();
+    // TODO: launch camera (e.g. expo-image-picker launchCameraAsync)
+  };
+
+  const handlePhotoLibrary = () => {
+    closeAttachmentSheet();
+    // TODO: open photo library (e.g. expo-image-picker launchImageLibraryAsync)
+  };
+
+  const handleChooseFile = () => {
+    closeAttachmentSheet();
+    // TODO: open document picker (e.g. expo-document-picker getDocumentAsync)
+  };
+
   const renderInputBar = () => (
-    <View style={styles.inputWrapper}>
-      <View style={styles.inputContainer}>
-        <TextInput
-          style={styles.input}
-          placeholder="Message"
-          placeholderTextColor="rgba(255,255,255,0.5)"
-          value={message}
-          onChangeText={setMessage}
-          onSubmitEditing={handleSend}
-          multiline
-          maxLength={1000}
-          editable={!sending}
-        />
-        <TouchableOpacity
-          onPress={handleSend}
-          disabled={sending || !message.trim()}
-          style={styles.sendButton}
-        >
-          <Feather name="send" size={20} color={message.trim() && !sending ? '#FFF' : 'rgba(255,255,255,0.4)'} />
-        </TouchableOpacity>
-      </View>
+    <View style={styles.inputBar}>
+      <TouchableOpacity onPress={openAttachmentSheet} style={styles.plusBtn} activeOpacity={0.7}>
+        <Feather name="plus" size={24} color="rgba(255,255,255,0.85)" />
+      </TouchableOpacity>
+      <TextInput
+        style={styles.inputField}
+        placeholder="Message"
+        placeholderTextColor="rgba(255,255,255,0.4)"
+        value={message}
+        onChangeText={setMessage}
+        onSubmitEditing={handleSend}
+        multiline
+        maxLength={1000}
+        editable={!sending}
+      />
+      <TouchableOpacity style={styles.micBtn} activeOpacity={0.7}>
+        <Feather name="mic" size={22} color="rgba(255,255,255,0.85)" />
+      </TouchableOpacity>
+      <TouchableOpacity
+        onPress={handleSend}
+        disabled={sending || !message.trim()}
+        style={styles.sendBtn}
+        activeOpacity={0.7}
+      >
+        <View style={styles.sendBtnCircle}>
+          <Feather name="send" size={20} color={message.trim() && !sending ? '#FFFFFF' : 'rgba(255,255,255,0.4)'} />
+        </View>
+      </TouchableOpacity>
     </View>
   );
 
+  const renderAttachmentSheet = () => (
+    <BottomSheetModal
+      ref={attachmentSheetRef}
+      snapPoints={attachmentSnapPoints}
+      enablePanDownToClose
+      backgroundStyle={styles.sheetBackground}
+      handleIndicatorStyle={styles.sheetHandleIndicator}
+    >
+      <BottomSheetView style={styles.sheetContent}>
+        <TouchableOpacity style={styles.sheetOption} onPress={handleTakePhoto} activeOpacity={0.7}>
+          <Feather name="camera" size={22} color="#FFFFFF" />
+          <Text style={styles.sheetOptionText}>Take photo</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.sheetOption} onPress={handlePhotoLibrary} activeOpacity={0.7}>
+          <Feather name="image" size={22} color="#FFFFFF" />
+          <Text style={styles.sheetOptionText}>Photo library</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.sheetOption} onPress={handleChooseFile} activeOpacity={0.7}>
+          <Feather name="file" size={22} color="#FFFFFF" />
+          <Text style={styles.sheetOptionText}>Choose file</Text>
+        </TouchableOpacity>
+      </BottomSheetView>
+    </BottomSheetModal>
+  );
+
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar barStyle="light-content" />
-      <LinearGradient
-        colors={['#000000', '#111111']}
-        style={StyleSheet.absoluteFill}
-      />
+      <View style={styles.headerBg} />
       <KeyboardAvoidingView
         style={styles.content}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -223,22 +257,23 @@ const Chat = () => {
         {renderHeader()}
         <ScrollView
           ref={scrollViewRef}
-          style={styles.messagesContainer}
-          contentContainerStyle={styles.messagesContent}
+          style={styles.scroll}
+          contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
         >
           {loading ? (
-            <View style={styles.loadingContainer}>
+            <View style={styles.loadingWrap}>
               <ActivityIndicator size="small" color="rgba(255,255,255,0.7)" />
-              <Text style={styles.loadingText}>Loading messages…</Text>
+              <Text style={styles.loadingLabel}>Loading messages…</Text>
             </View>
           ) : (
             <>
               {apiError ? (
-                <View style={styles.errorBanner}>
-                  <Text style={styles.errorBannerText}>{apiError}</Text>
+                <View style={styles.errorWrap}>
+                  <Text style={styles.errorText}>{apiError}</Text>
                   <TouchableOpacity onPress={loadMessages}>
-                    <Text style={styles.errorBannerRetry}>Retry</Text>
+                    <Text style={styles.errorRetry}>Retry</Text>
                   </TouchableOpacity>
                 </View>
               ) : null}
@@ -246,14 +281,17 @@ const Chat = () => {
             </>
           )}
         </ScrollView>
-        {renderInputBar()}
+        <View style={[styles.inputBarWrap, { paddingBottom: insets.bottom || 12 }]}>
+          {renderInputBar()}
+        </View>
         {sending ? (
-          <View style={styles.sendingBar}>
+          <View style={styles.sendingWrap}>
             <ActivityIndicator size="small" color="rgba(255,255,255,0.6)" />
-            <Text style={styles.sendingText}>Omi is typing…</Text>
+            <Text style={styles.sendingLabel}>Omi is typing…</Text>
           </View>
         ) : null}
       </KeyboardAvoidingView>
+      {renderAttachmentSheet()}
     </SafeAreaView>
   );
 };
@@ -261,6 +299,10 @@ const Chat = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: '#000000',
+  },
+  headerBg: {
+    ...StyleSheet.absoluteFillObject,
     backgroundColor: '#000000',
   },
   content: {
@@ -271,181 +313,186 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 16,
-    height: 60,
+    paddingVertical: 14,
+    minHeight: 52,
+    backgroundColor: '#000000',
   },
-  menuButton: {
-    width: 40,
-    height: 40,
+  headerIconButton: {
+    width: 44,
+    height: 44,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  loadingIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  titleContainer: {
+  titleRow: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   titleText: {
     color: '#FFFFFF',
-    fontSize: 17,
+    fontSize: 18,
     fontWeight: '600',
   },
-  connectedBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(76,217,100,0.15)',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 10,
-    marginLeft: 8,
-  },
-  connectedBadgeText: {
-    color: 'rgba(76,217,100,0.95)',
-    fontSize: 11,
-    fontWeight: '600',
+  titleChevron: {
     marginLeft: 4,
   },
-  titleIcon: {
-    marginLeft: 4,
-    marginTop: 2,
-  },
-  profileButton: {
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  profileIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  messagesContainer: {
+  scroll: {
     flex: 1,
   },
-  messagesContent: {
-    padding: 16,
-    paddingBottom: 24,
+  scrollContent: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 100,
   },
-  messageContainer: {
-    marginBottom: 16,
-    maxWidth: '75%',
+  messageWrap: {
+    marginBottom: 20,
+    maxWidth: '82%',
   },
-  userMessage: {
+  messageWrapUser: {
     alignSelf: 'flex-end',
   },
-  botMessage: {
+  messageWrapBot: {
     alignSelf: 'flex-start',
   },
-  messageBubble: {
+  bubble: {
     borderRadius: 18,
-    padding: 12,
-    paddingVertical: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
   },
-  userBubble: {
-    backgroundColor: '#1A1A1A',
+  bubbleUser: {
+    backgroundColor: 'rgba(38,38,38,1)',
   },
-  botBubble: {
-    backgroundColor: 'rgba(255,255,255,0.1)',
+  bubbleBot: {
+    backgroundColor: 'rgba(38,38,38,1)',
   },
-  messageText: {
+  bubbleText: {
     color: '#FFFFFF',
     fontSize: 16,
     lineHeight: 22,
   },
-  timestamp: {
+  bubbleTime: {
     fontSize: 12,
-    marginTop: 4,
-    color: 'rgba(255,255,255,0.5)',
+    marginTop: 6,
+    color: 'rgba(255,255,255,0.45)',
   },
-  userTimestamp: {
+  bubbleTimeUser: {
     textAlign: 'right',
   },
-  botTimestamp: {
+  bubbleTimeBot: {
     textAlign: 'left',
   },
-  inputWrapper: {
+  inputBarWrap: {
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
-    paddingHorizontal: 16,
-    paddingBottom: 30,
-    paddingTop: 10,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-  },
-  inputContainer: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    borderRadius: 25,
     paddingHorizontal: 12,
-    paddingVertical: 8,
-    minHeight: 45,
-    marginBottom: 60,
+    paddingTop: 14,
+    backgroundColor: 'rgba(36,36,36,1)',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
   },
-  sendButton: {
-    padding: 8,
+  inputBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(50,50,50,1)',
+    borderRadius: 22,
+    paddingLeft: 4,
+    paddingRight: 4,
+    paddingVertical: 6,
+    minHeight: 48,
+  },
+  plusBtn: {
+    width: 44,
+    height: 44,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  input: {
+  inputField: {
     flex: 1,
     color: '#FFFFFF',
     fontSize: 16,
-    padding: 0,
-    paddingTop: Platform.OS === 'ios' ? 8 : 0,
-    paddingBottom: Platform.OS === 'ios' ? 8 : 0,
+    paddingVertical: Platform.OS === 'ios' ? 10 : 8,
+    paddingHorizontal: 12,
   },
-  loadingContainer: {
+  micBtn: {
+    width: 44,
+    height: 44,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  sendBtn: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  sendBtnCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingWrap: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingVertical: 40,
+    paddingVertical: 48,
   },
-  loadingText: {
+  loadingLabel: {
     color: 'rgba(255,255,255,0.5)',
     fontSize: 14,
-    marginTop: 8,
+    marginTop: 10,
   },
-  errorBanner: {
+  errorWrap: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: 'rgba(255,107,107,0.15)',
+    backgroundColor: 'rgba(255,107,107,0.12)',
     padding: 12,
     borderRadius: 12,
     marginBottom: 12,
   },
-  errorBannerText: {
+  errorText: {
     color: 'rgba(255,255,255,0.9)',
     fontSize: 14,
   },
-  errorBannerRetry: {
-    color: '#FFF',
+  errorRetry: {
+    color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '600',
   },
-  sendingBar: {
+  sendingWrap: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 8,
     gap: 8,
   },
-  sendingText: {
-    color: 'rgba(255,255,255,0.6)',
+  sendingLabel: {
+    color: 'rgba(255,255,255,0.55)',
     fontSize: 13,
+  },
+  sheetBackground: {
+    backgroundColor: 'rgba(36,36,36,1)',
+  },
+  sheetHandleIndicator: {
+    backgroundColor: 'rgba(255,255,255,0.35)',
+  },
+  sheetContent: {
+    paddingHorizontal: 20,
+    paddingBottom: Platform.OS === 'ios' ? 34 : 20,
+  },
+  sheetOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    gap: 14,
+  },
+  sheetOptionText: {
+    fontSize: 17,
+    fontWeight: '500',
+    color: '#FFFFFF',
   },
 });
 

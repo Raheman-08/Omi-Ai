@@ -1,99 +1,54 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Dimensions, Platform, Animated } from 'react-native';
+import { View, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { BottomTabBarProps } from '@react-navigation/bottom-tabs';
-import { NavigationHelpers, ParamListBase, TabNavigationState } from '@react-navigation/native';
-import { LinearGradient } from 'expo-linear-gradient';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Feather } from '@expo/vector-icons';
 import Home from '../screens/Homescreen/Home';
-import Chat from '../screens/Chatscreen/Chat';
 import Explore from '../screens/Explorescreen/Explore';
+import Voice from '../screens/VoiceScreen/Voice';
+import Tasks from '../screens/TasksScreen/Tasks';
+import Memories from '../screens/MemoriesScreen/Memories';
+import Apps from '../screens/AppsScreen/Apps';
 
-// Placeholder components until actual screens are created
 const HomeScreen = () => <Home />;
-const ChatScreen = () => <Chat />;
 const ExploreScreen = () => <Explore />;
+const VoiceScreen = () => <Voice />;
+const TasksScreen = () => <Tasks />;
+const MemoriesScreen = () => <Memories />;
+const AppsScreen = () => <Apps />;
 
 export type TabParamList = {
   Home: undefined;
-  Chat: { conversationId?: string };
-  Explore: undefined;
+  Tasks: undefined;
+  Voice: undefined;
+  Memories: undefined;
+  Apps: undefined;
 };
 
 const Tab = createBottomTabNavigator<TabParamList>();
-const { width } = Dimensions.get('window');
 
-const TabButton = ({ 
-  label, 
-  isFocused, 
-  onPress 
-}: { 
-  label: string; 
-  isFocused: boolean; 
-  onPress: () => void;
-}) => {
-  const fadeAnim = React.useRef(new Animated.Value(isFocused ? 1 : 0.5)).current;
-  const scaleAnim = React.useRef(new Animated.Value(isFocused ? 1.1 : 1)).current;
-
-  React.useEffect(() => {
-    Animated.parallel([
-      Animated.timing(fadeAnim, {
-        toValue: isFocused ? 1 : 0.5,
-        duration: 200,
-        useNativeDriver: true,
-      }),
-      Animated.spring(scaleAnim, {
-        toValue: isFocused ? 1.1 : 1,
-        tension: 50,
-        friction: 7,
-        useNativeDriver: true,
-      })
-    ]).start();
-  }, [isFocused]);
-
-  return (
-    <TouchableOpacity
-      accessibilityRole="button"
-      accessibilityState={isFocused ? { selected: true } : {}}
-      accessibilityLabel={`${label} tab`}
-      onPress={onPress}
-      style={styles.tab}
-    >
-      <Animated.Text
-        style={[
-          styles.label,
-          {
-            opacity: fadeAnim,
-            transform: [{ scale: scaleAnim }]
-          }
-        ]}
-      >
-        {label}
-      </Animated.Text>
-      <Animated.View 
-        style={[
-          styles.indicator,
-          {
-            opacity: fadeAnim,
-            transform: [{ scale: fadeAnim }]
-          }
-        ]}
-      />
-    </TouchableOpacity>
-  );
+const TAB_ICONS: Record<string, keyof typeof Feather.glyphMap> = {
+  Home: 'home',
+  Tasks: 'check-square',
+  Voice: 'mic',
+  Memories: 'cpu',
+  Apps: 'grid',
 };
 
+const PRIMARY = '#A855F7';
+const INACTIVE = 'rgba(255,255,255,0.4)';
+
 const CustomTabBar = ({ state, descriptors, navigation }: BottomTabBarProps) => {
+  const insets = useSafeAreaInsets();
+  const CENTER_INDEX = 2;
+
   return (
-    <View style={styles.container}>
-      <LinearGradient
-        colors={['rgba(255,255,255,0.1)', 'rgba(255,255,255,0.05)']}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 0 }}
-        style={styles.gradient}
-      />
-      <View style={styles.content}>
+    <View style={[styles.container, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+      <View style={styles.bar}>
         {state.routes.map((route, index) => {
           const isFocused = state.index === index;
+          const isCenter = index === CENTER_INDEX;
 
           const onPress = () => {
             const event = navigation.emit({
@@ -101,19 +56,47 @@ const CustomTabBar = ({ state, descriptors, navigation }: BottomTabBarProps) => 
               target: route.key,
               canPreventDefault: true,
             });
-
             if (!isFocused && !event.defaultPrevented) {
               navigation.navigate(route.name);
             }
           };
 
+          if (isCenter) {
+            return (
+              <TouchableOpacity
+                key={route.key}
+                onPress={onPress}
+                style={styles.centerWrap}
+                activeOpacity={0.85}
+                accessibilityRole="button"
+                accessibilityState={{ selected: isFocused }}
+                accessibilityLabel="Voice"
+              >
+                <View style={[styles.centerButton, isFocused && styles.centerButtonActive]}>
+                  <Feather name="mic" size={26} color="#FFFFFF" />
+                </View>
+              </TouchableOpacity>
+            );
+          }
+
           return (
-            <TabButton
+            <TouchableOpacity
               key={route.key}
-              label={route.name}
-              isFocused={isFocused}
               onPress={onPress}
-            />
+              style={styles.tab}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityState={{ selected: isFocused }}
+              accessibilityLabel={`${route.name} tab`}
+            >
+              <View style={[styles.iconWrap, isFocused && styles.iconWrapActive]}>
+                <Feather
+                  name={TAB_ICONS[route.name] ?? 'circle'}
+                  size={22}
+                  color={isFocused ? PRIMARY : INACTIVE}
+                />
+              </View>
+            </TouchableOpacity>
           );
         })}
       </View>
@@ -127,59 +110,76 @@ const BottomNavigation = () => {
       tabBar={(props) => <CustomTabBar {...props} />}
       screenOptions={{
         headerShown: false,
+        tabBarHideOnKeyboard: true,
       }}
     >
       <Tab.Screen name="Home" component={HomeScreen} />
-      <Tab.Screen name="Chat" component={ChatScreen} />
-      <Tab.Screen name="Explore" component={ExploreScreen} />
+      <Tab.Screen name="Tasks" component={TasksScreen} />
+      <Tab.Screen name="Voice" component={VoiceScreen} />
+      <Tab.Screen name="Memories" component={MemoriesScreen} />
+      <Tab.Screen name="Apps" component={ExploreScreen} />
     </Tab.Navigator>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
-    position: 'absolute',
-    bottom: 40,
-    left: 20,
-    right: 20,
-    height: 70,
-    borderRadius: 35,
-    overflow: 'hidden',
-    backgroundColor: Platform.select({
-      ios: 'rgba(0,0,0,0.7)',
-      android: 'rgba(0,0,0,0.9)',
-    }),
+    backgroundColor: '#0C0C0C',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: 'rgba(255,255,255,0.08)',
+    paddingTop: 10,
   },
-  gradient: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    borderRadius: 35,
-  },
-  content: {
+  bar: {
     flexDirection: 'row',
-    height: '100%',
+    alignItems: 'flex-end',
+    justifyContent: 'space-around',
+    paddingHorizontal: 4,
   },
   tab: {
     flex: 1,
-    justifyContent: 'center',
     alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    minHeight: 48,
   },
-  label: {
-    fontSize: 16,
-    fontWeight: '600',
-    letterSpacing: 0.5,
-    color: '#FFFFFF',
+  iconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  indicator: {
-    position: 'absolute',
-    bottom: 12,
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: '#FFFFFF',
+  iconWrapActive: {
+    backgroundColor: 'rgba(168,85,247,0.18)',
+  },
+  centerWrap: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    marginBottom: 4,
+  },
+  centerButton: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    backgroundColor: PRIMARY,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...Platform.select({
+      ios: {
+        shadowColor: PRIMARY,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.4,
+        shadowRadius: 10,
+      },
+      android: {
+        elevation: 8,
+      },
+    }),
+  },
+  centerButtonActive: {
+    backgroundColor: '#9333EA',
+    opacity: 1,
   },
 });
 

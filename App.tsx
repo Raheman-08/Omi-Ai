@@ -1,5 +1,7 @@
 import React from 'react';
 import { View } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 import StackNavigation from './src/navigation/StackNavigation';
 import { OmiDeviceProvider } from './src/context/OmiDeviceContext';
 import { getFirebaseAuth } from './src/config/firebase';
@@ -18,10 +20,14 @@ setOnRefreshToken(async () => {
 
 export default function App() {
   return (
-    <View style={{ flex: 1 }}>
-      <OmiDeviceProvider>
-        <StackNavigation />
-      </OmiDeviceProvider>
-    </View>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <BottomSheetModalProvider>
+        <View style={{ flex: 1 }}>
+          <OmiDeviceProvider>
+            <StackNavigation />
+          </OmiDeviceProvider>
+        </View>
+      </BottomSheetModalProvider>
+    </GestureHandlerRootView>
   );
 }

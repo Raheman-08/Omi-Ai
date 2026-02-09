@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import {
   StyleSheet,
   Text,
@@ -25,10 +25,36 @@ import { BLE_UNAVAILABLE_MESSAGE } from '../../hooks/useOmiDevice';
 import { useConversations, type ConversationItem } from '../../hooks/useConversations';
 import { hasValidToken } from '../../api/authStore';
 import { getUserOnboardingState } from '../../api/users';
+import { getFolders, createFolder } from '../../api/folders';
+import { getAllGoals, createGoal } from '../../api/goals';
+import { getDailyScoreBreakdown, type DailyScoreBreakdown } from '../../api/dailyScore';
+import { formatDuration } from '../../hooks/useConversations';
 import type { OmiDevice } from '@omiai/omi-react-native';
 import { mapCodecToName } from '@omiai/omi-react-native';
+import { BottomSheetModal, BottomSheetView } from '@gorhom/bottom-sheet';
 
 const SEARCH_DEBOUNCE_MS = 400;
+
+const FOLDER_ICONS: (keyof typeof Feather.glyphMap)[] = [
+  'folder',
+  'briefcase',
+  'home',
+  'file-text',
+  'users',
+  'heart',
+  'link',
+  'send',
+];
+const FOLDER_COLORS = [
+  '#3B82F6',
+  '#EF4444',
+  '#22C55E',
+  '#A855F7',
+  '#F97316',
+  '#06B6D4',
+  '#EC4899',
+  '#1E40AF',
+];
 
 const Home = () => {
   const navigation = useNavigation();
@@ -41,15 +67,60 @@ const Home = () => {
   const [searchLoading, setSearchLoading] = useState(false);
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const { items: apiConversations, loading: conversationsLoading, error: conversationsError, refresh: refreshConversations, search: apiSearch } = useConversations({ limit: 50 });
+  const [conversationFilter, setConversationFilter] = useState<'all' | 'starred' | string>('all');
+  const [folders, setFolders] = useState<{ id: string; name: string }[]>([]);
+  const [dailyScore, setDailyScore] = useState(100);
+  const [scoreBreakdown, setScoreBreakdown] = useState<DailyScoreBreakdown | null>(null);
+  const [scoreBreakdownLoading, setScoreBreakdownLoading] = useState(false);
+  const scoreBreakdownSheetRef = useRef<BottomSheetModal>(null);
+  const scoreBreakdownSnapPoints = useMemo(() => ['50%'], []);
+  const newFolderSheetRef = useRef<BottomSheetModal>(null);
+  const newFolderSnapPoints = useMemo(() => ['65%'], []);
+  const [newFolderName, setNewFolderName] = useState('');
+  const [newFolderDescription, setNewFolderDescription] = useState('');
+  const [newFolderIconIndex, setNewFolderIconIndex] = useState(0);
+  const [newFolderColorIndex, setNewFolderColorIndex] = useState(0);
+  const [newFolderCreating, setNewFolderCreating] = useState(false);
+  const addGoalSheetRef = useRef<BottomSheetModal>(null);
+  const addGoalSnapPoints = useMemo(() => ['45%'], []);
+  const [addGoalTitle, setAddGoalTitle] = useState('');
+  const [addGoalCurrent, setAddGoalCurrent] = useState('0');
+  const [addGoalTarget, setAddGoalTarget] = useState('100');
+  const [addGoalCreating, setAddGoalCreating] = useState(false);
+
+  const { items: apiConversations, loading: conversationsLoading, error: conversationsError, refresh: refreshConversations, search: apiSearch } = useConversations({
+    limit: 50,
+    starred: conversationFilter === 'starred' ? true : undefined,
+    folderId: conversationFilter !== 'all' && conversationFilter !== 'starred' ? conversationFilter : undefined,
+  });
   const conversations = hasValidToken() ? apiConversations : [];
 
-  // Greeting: load display name from onboarding
   useEffect(() => {
     let cancelled = false;
     if (!hasValidToken()) return;
     getUserOnboardingState().then((state) => {
       if (!cancelled && state?.display_name?.trim()) setDisplayName(state.display_name.trim());
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!hasValidToken()) return;
+    getFolders().then((list) => {
+      if (!cancelled) setFolders(list.map((f) => ({ id: f.id, name: f.name })));
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!hasValidToken()) return;
+    getAllGoals().then((list) => {
+      if (!cancelled && list.length > 0) {
+        const total = list.reduce((acc, g) => acc + (g.current_value / (g.target_value || 1)) * 100, 0);
+        setDailyScore(Math.round(total / list.length));
+      }
     });
     return () => { cancelled = true; };
   }, []);
@@ -332,8 +403,8 @@ const Home = () => {
         onPress={handleDevicePress}
         activeOpacity={0.7}
       >
-        <Feather name="bluetooth" size={16} color="rgba(255,255,255,0.5)" style={styles.deviceIcon} />
-        <Text style={styles.deviceStatusText}>Tap to find device</Text>
+        <Feather name="smartphone" size={16} color="rgba(255,255,255,0.7)" style={styles.deviceIcon} />
+        <Text style={styles.deviceStatusText}>Connect Device</Text>
         <Feather name="chevron-right" size={16} color="rgba(255,255,255,0.3)" style={styles.chevronIcon} />
       </TouchableOpacity>
     );
@@ -518,7 +589,7 @@ const Home = () => {
   );
 
   const openConversation = (conversationId: string) => {
-    (navigation as any).navigate('Chat', { conversationId });
+    (navigation.getParent() as any)?.navigate('Chat', { conversationId });
   };
 
   const renderConversations = () => (
@@ -557,46 +628,434 @@ const Home = () => {
     </ScrollView>
   );
 
+  const groupByDate = (items: ConversationItem[]): { label: string; items: ConversationItem[] }[] => {
+    const now = new Date();
+    const today = now.toDateString();
+    const yesterday = new Date(now.getTime() - 86400000).toDateString();
+    const groups: Record<string, ConversationItem[]> = {};
+    items.forEach((item) => {
+      const key = new Date(item.created_at).toDateString();
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(item);
+    });
+    const order = Object.keys(groups).sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
+    return order.map((key) => ({
+      label: key === today ? 'Today' : key === yesterday ? 'Yesterday' : new Date(key).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+      items: groups[key],
+    }));
+  };
+
+  const filteredForList = searchQuery.trim() && searchResults !== null ? searchResults : conversations;
+  const grouped = groupByDate(filteredForList);
+
   const renderHeader = () => (
     <View style={styles.header}>
       <View style={styles.headerLeft}>
-        {displayName ? (
-          <Text style={styles.greetingText}>Hi, {displayName}</Text>
-        ) : null}
         {renderDeviceStatus()}
       </View>
       <View style={styles.headerRight}>
-        <TouchableOpacity 
-          style={styles.languageButton}
-          activeOpacity={0.7}
-        >
-          <Feather name="globe" size={18} color="#FFFFFF" />
-          <Text style={styles.languageText}>EN</Text>
+        <TouchableOpacity style={styles.iconButton} onPress={() => setIsSearchFocused(true)}>
+          <Feather name="search" size={20} color="#FFFFFF" />
         </TouchableOpacity>
-        <TouchableOpacity 
-          style={styles.profileButton}
-          activeOpacity={0.7}
-        >
-          <Feather name="user" size={20} color="#FFFFFF" />
+        <TouchableOpacity style={styles.iconButton} onPress={refreshConversations}>
+          <Feather name="refresh-cw" size={20} color="#FFFFFF" />
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.iconButton}>
+          <Feather name="settings" size={20} color="#FFFFFF" />
         </TouchableOpacity>
       </View>
     </View>
   );
 
+  const gaugeFillRotation = (1 - Math.min(100, Math.max(0, dailyScore)) / 100) * 180;
+
+  const openScoreBreakdown = useCallback(() => {
+    scoreBreakdownSheetRef.current?.present();
+    setScoreBreakdownLoading(true);
+    setScoreBreakdown(null);
+    getDailyScoreBreakdown()
+      .then((data) => {
+        setScoreBreakdown(data);
+      })
+      .finally(() => {
+        setScoreBreakdownLoading(false);
+      });
+  }, []);
+
+  const closeScoreBreakdown = useCallback(() => {
+    scoreBreakdownSheetRef.current?.dismiss();
+  }, []);
+
+  const openNewFolderSheet = useCallback(() => {
+    setNewFolderName('');
+    setNewFolderDescription('');
+    setNewFolderIconIndex(0);
+    setNewFolderColorIndex(0);
+    newFolderSheetRef.current?.present();
+  }, []);
+
+  const closeNewFolderSheet = useCallback(() => {
+    newFolderSheetRef.current?.dismiss();
+  }, []);
+
+  const handleCreateFolder = useCallback(async () => {
+    const name = newFolderName.trim();
+    if (!name) return;
+    setNewFolderCreating(true);
+    try {
+      const folder = await createFolder({
+        name,
+        description: newFolderDescription.trim() || undefined,
+        icon: FOLDER_ICONS[newFolderIconIndex],
+        color: FOLDER_COLORS[newFolderColorIndex],
+      });
+      if (folder) {
+        closeNewFolderSheet();
+        const list = await getFolders();
+        setFolders(list.map((f) => ({ id: f.id, name: f.name })));
+      }
+    } finally {
+      setNewFolderCreating(false);
+    }
+  }, [newFolderName, newFolderDescription, newFolderIconIndex, newFolderColorIndex, closeNewFolderSheet]);
+
+  const openAddGoalSheet = useCallback(() => {
+    setAddGoalTitle('');
+    setAddGoalCurrent('0');
+    setAddGoalTarget('100');
+    addGoalSheetRef.current?.present();
+  }, []);
+
+  const closeAddGoalSheet = useCallback(() => {
+    addGoalSheetRef.current?.dismiss();
+  }, []);
+
+  const handleAddGoal = useCallback(async () => {
+    const title = addGoalTitle.trim();
+    if (!title) return;
+    const current = parseInt(addGoalCurrent, 10);
+    const target = parseInt(addGoalTarget, 10);
+    if (Number.isNaN(current) || Number.isNaN(target) || target < 0) return;
+    setAddGoalCreating(true);
+    try {
+      const goal = await createGoal({
+        title,
+        current_value: current,
+        target_value: target,
+      });
+      if (goal) {
+        closeAddGoalSheet();
+        const list = await getAllGoals();
+        if (list.length > 0) {
+          const total = list.reduce((acc, g) => acc + (g.current_value / (g.target_value || 1)) * 100, 0);
+          setDailyScore(Math.round(total / list.length));
+        }
+      }
+    } finally {
+      setAddGoalCreating(false);
+    }
+  }, [addGoalTitle, addGoalCurrent, addGoalTarget, closeAddGoalSheet]);
+
+  const renderDailyScore = () => (
+    <View style={styles.dailyScoreCard}>
+      <View style={styles.dailyScoreLeft}>
+        <View style={styles.dailyScoreHeader}>
+          <Text style={styles.dailyScoreTitle}>DAILY SCORE</Text>
+        </View>
+        <Text style={styles.dailyScoreDesc}>A score to help you better focus on execution.</Text>
+        <TouchableOpacity style={styles.addGoalButton} activeOpacity={0.8} onPress={openAddGoalSheet}>
+          <Text style={styles.addGoalText}>Add Goal &gt;</Text>
+        </TouchableOpacity>
+      </View>
+      <View style={styles.dailyScoreGaugeWrap}>
+        <TouchableOpacity style={styles.dailyScoreGaugeHelp} activeOpacity={0.7} onPress={openScoreBreakdown}>
+          <Feather name="help-circle" size={18} color="rgba(255,255,255,0.7)" />
+        </TouchableOpacity>
+        <View style={styles.dailyScoreGaugeArc}>
+          <View
+            style={[
+              styles.dailyScoreGaugeArcFillWrap,
+              { transform: [{ rotate: `${gaugeFillRotation}deg` }] },
+            ]}
+          >
+            <View style={styles.dailyScoreGaugeArcFill} />
+            <View style={styles.dailyScoreGaugeArcFillMask} />
+          </View>
+          <View style={styles.dailyScoreGaugeArcOutline} pointerEvents="none" />
+        </View>
+        <Text style={styles.dailyScoreValue}>{dailyScore}</Text>
+      </View>
+    </View>
+  );
+
+  const filterPills = [
+    { key: 'starred' as const, label: 'Starred', icon: 'star' as const },
+    ...folders.slice(0, 4).map((f) => ({ key: f.id, label: f.name, icon: 'briefcase' as const })),
+  ];
+
+  const renderConversationRow = (item: ConversationItem) => (
+    <TouchableOpacity
+      key={item.id}
+      style={styles.conversationRow}
+      activeOpacity={0.7}
+      onPress={() => openConversation(item.id)}
+    >
+      <View style={styles.conversationRowIcon}>
+        <MaterialCommunityIcons name={(item.icon || 'message-text') as any} size={22} color="#FFFFFF" />
+      </View>
+      <View style={styles.conversationRowContent}>
+        <Text style={styles.conversationRowTitle} numberOfLines={1}>{item.title}</Text>
+        <Text style={styles.conversationRowMeta}>
+          {item.timestamp}
+          {item.durationSeconds != null ? ` • ${formatDuration(item.durationSeconds)}` : ''}
+        </Text>
+      </View>
+      <Feather name="chevron-right" size={18} color="rgba(255,255,255,0.4)" />
+    </TouchableOpacity>
+  );
+
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" />
-      <LinearGradient
-        colors={['#000000', '#111111']}
-        style={StyleSheet.absoluteFill}
-      />
+      <LinearGradient colors={['#000000', '#111111']} style={StyleSheet.absoluteFill} />
       <View style={styles.content}>
         {renderHeader()}
-        {renderMicButton()}
-        {renderSearchBar()}
-        {renderConversations()}
+        <ScrollView
+          style={styles.mainScroll}
+          contentContainerStyle={styles.mainScrollContent}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            hasValidToken() && searchResults === null ? (
+              <RefreshControl
+                refreshing={conversationsLoading && !searchLoading}
+                onRefresh={refreshConversations}
+                tintColor="rgba(255,255,255,0.7)"
+              />
+            ) : undefined
+          }
+        >
+          {renderDailyScore()}
+          <Text style={styles.sectionTitle}>Conversations</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterPillsScroll} contentContainerStyle={styles.filterPillsContent}>
+            <TouchableOpacity
+              style={[styles.filterPill, conversationFilter === 'all' && styles.filterPillActive]}
+              onPress={() => setConversationFilter('all')}
+            >
+              <Feather name="layers" size={14} color="#FFFFFF" />
+              <Text style={styles.filterPillText}>All</Text>
+            </TouchableOpacity>
+            {filterPills.map((p) => (
+              <TouchableOpacity
+                key={p.key}
+                style={[styles.filterPill, conversationFilter === p.key && styles.filterPillActive]}
+                onPress={() => setConversationFilter(p.key)}
+              >
+                <Feather name={p.icon} size={14} color="#FFFFFF" />
+                <Text style={styles.filterPillText}>{p.label}</Text>
+              </TouchableOpacity>
+            ))}
+            <TouchableOpacity style={styles.filterPillAdd} onPress={openNewFolderSheet}>
+              <Feather name="plus" size={16} color="#FFFFFF" />
+            </TouchableOpacity>
+          </ScrollView>
+          {conversationsError && searchResults === null ? (
+            <View style={styles.apiErrorContainer}>
+              <Text style={styles.apiErrorText}>{conversationsError}</Text>
+              <TouchableOpacity onPress={refreshConversations}>
+                <Text style={styles.apiErrorRetry}>Tap to retry</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
+          {grouped.length === 0 && !conversationsLoading ? (
+            <View style={styles.emptyStateContainer}>
+              <Text style={styles.emptyStateText}>No conversations</Text>
+            </View>
+          ) : (
+            grouped.map(({ label, items: groupItems }) => (
+              <View key={label} style={styles.dateGroup}>
+                <Text style={styles.dateGroupLabel}>{label}</Text>
+                {groupItems.map(renderConversationRow)}
+              </View>
+            ))
+          )}
+          <View style={styles.bottomSpacer} />
+        </ScrollView>
+        <View style={styles.fabContainer}>
+          <TouchableOpacity
+            style={styles.fabAskOmi}
+            activeOpacity={0.8}
+            onPress={() => (navigation.getParent() as any)?.navigate('Chat', {})}
+          >
+            <Feather name="message-circle" size={18} color="#FFFFFF" />
+            <Text style={styles.fabAskOmiText}>Ask Omi</Text>
+          </TouchableOpacity>
+          
+        </View>
       </View>
       {renderDeviceModal()}
+      <BottomSheetModal
+        ref={scoreBreakdownSheetRef}
+        snapPoints={scoreBreakdownSnapPoints}
+        enablePanDownToClose
+        backgroundStyle={styles.scoreBreakdownSheetBg}
+        handleIndicatorStyle={styles.scoreBreakdownSheetHandle}
+      >
+        <BottomSheetView style={styles.scoreBreakdownSheetContent}>
+          <Text style={styles.scoreBreakdownTitle}>Daily Score Breakdown</Text>
+          {scoreBreakdownLoading ? (
+            <ActivityIndicator size="small" color="rgba(255,255,255,0.7)" style={styles.scoreBreakdownLoader} />
+          ) : (
+            <>
+              <View style={styles.scoreBreakdownRow}>
+                <Text style={styles.scoreBreakdownLabel}>Today's Score</Text>
+                <Text style={styles.scoreBreakdownValue}>{scoreBreakdown?.todayScore ?? 0}</Text>
+              </View>
+              <View style={styles.scoreBreakdownRow}>
+                <Text style={styles.scoreBreakdownLabel}>Tasks Completed</Text>
+                <Text style={styles.scoreBreakdownValue}>
+                  {scoreBreakdown != null ? `${scoreBreakdown.tasksCompleted}/${scoreBreakdown.tasksTotal}` : '0/0'}
+                </Text>
+              </View>
+              <View style={styles.scoreBreakdownRow}>
+                <Text style={styles.scoreBreakdownLabel}>Completion Rate</Text>
+                <Text style={styles.scoreBreakdownValue}>
+                  {scoreBreakdown?.completionRate != null ? `${scoreBreakdown.completionRate}%` : 'N/A'}
+                </Text>
+              </View>
+            </>
+          )}
+          <View style={styles.scoreBreakdownHowItWorks}>
+            <Text style={styles.scoreBreakdownHowTitle}>How it works</Text>
+            <Text style={styles.scoreBreakdownHowText}>
+              Your daily score is based on task completion. Complete your tasks to improve your score!
+            </Text>
+          </View>
+          <TouchableOpacity style={styles.scoreBreakdownGotIt} activeOpacity={0.8} onPress={closeScoreBreakdown}>
+            <Text style={styles.scoreBreakdownGotItText}>Got it</Text>
+          </TouchableOpacity>
+        </BottomSheetView>
+      </BottomSheetModal>
+      <BottomSheetModal
+        ref={newFolderSheetRef}
+        snapPoints={newFolderSnapPoints}
+        enablePanDownToClose
+        backgroundStyle={styles.newFolderSheetBg}
+        handleIndicatorStyle={styles.newFolderSheetHandle}
+      >
+        <BottomSheetView style={styles.newFolderSheetContent}>
+          <View style={styles.newFolderSheetHeader}>
+            <Text style={styles.newFolderSheetTitle}>New Folder</Text>
+            <TouchableOpacity
+              onPress={handleCreateFolder}
+              disabled={!newFolderName.trim() || newFolderCreating}
+              style={styles.newFolderCreateBtn}
+            >
+              <Text
+                style={[
+                  styles.newFolderCreateBtnText,
+                  (!newFolderName.trim() || newFolderCreating) && styles.newFolderCreateBtnTextDisabled,
+                ]}
+              >
+                Create
+              </Text>
+            </TouchableOpacity>
+          </View>
+          <TextInput
+            style={styles.newFolderInput}
+            placeholder="Folder name"
+            placeholderTextColor="rgba(255,255,255,0.4)"
+            value={newFolderName}
+            onChangeText={setNewFolderName}
+          />
+          <TextInput
+            style={[styles.newFolderInput, styles.newFolderInputSecond]}
+            placeholder="Description (optional)"
+            placeholderTextColor="rgba(255,255,255,0.4)"
+            value={newFolderDescription}
+            onChangeText={setNewFolderDescription}
+          />
+          <Text style={styles.newFolderSectionLabel}>Icon</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.newFolderIconsScroll} contentContainerStyle={styles.newFolderIconsContent}>
+            {FOLDER_ICONS.map((iconName, idx) => (
+              <TouchableOpacity
+                key={iconName}
+                style={[styles.newFolderIconBtn, newFolderIconIndex === idx && styles.newFolderIconBtnSelected]}
+                onPress={() => setNewFolderIconIndex(idx)}
+              >
+                <Feather name={iconName} size={22} color="#FFFFFF" />
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+          <Text style={styles.newFolderSectionLabel}>Color</Text>
+          <View style={styles.newFolderColorsRow}>
+            {FOLDER_COLORS.map((hex, idx) => (
+              <TouchableOpacity
+                key={hex}
+                style={[styles.newFolderColorBtn, { backgroundColor: hex }]}
+                onPress={() => setNewFolderColorIndex(idx)}
+              >
+                {newFolderColorIndex === idx ? (
+                  <Feather name="check" size={18} color="#FFFFFF" />
+                ) : null}
+              </TouchableOpacity>
+            ))}
+          </View>
+        </BottomSheetView>
+      </BottomSheetModal>
+      <BottomSheetModal
+        ref={addGoalSheetRef}
+        snapPoints={addGoalSnapPoints}
+        enablePanDownToClose
+        backgroundStyle={styles.addGoalSheetBg}
+        handleIndicatorStyle={styles.addGoalSheetHandle}
+      >
+        <BottomSheetView style={styles.addGoalSheetContent}>
+          <Text style={styles.addGoalSheetTitle}>Add Goal</Text>
+          <TextInput
+            style={styles.addGoalInput}
+            placeholder="Goal title"
+            placeholderTextColor="rgba(255,255,255,0.4)"
+            value={addGoalTitle}
+            onChangeText={setAddGoalTitle}
+          />
+          <View style={styles.addGoalRow}>
+            <View style={styles.addGoalFieldWrap}>
+              <Text style={styles.addGoalLabel}>Current</Text>
+              <TextInput
+                style={styles.addGoalInputSmall}
+                placeholder="0"
+                placeholderTextColor="rgba(255,255,255,0.4)"
+                value={addGoalCurrent}
+                onChangeText={setAddGoalCurrent}
+                keyboardType="numeric"
+              />
+            </View>
+            <View style={styles.addGoalFieldWrap}>
+              <Text style={styles.addGoalLabel}>Target</Text>
+              <TextInput
+                style={styles.addGoalInputSmall}
+                placeholder="100"
+                placeholderTextColor="rgba(255,255,255,0.4)"
+                value={addGoalTarget}
+                onChangeText={setAddGoalTarget}
+                keyboardType="numeric"
+              />
+            </View>
+          </View>
+          <TouchableOpacity
+            style={styles.addGoalSubmitBtn}
+            activeOpacity={0.8}
+            onPress={handleAddGoal}
+            disabled={!addGoalTitle.trim() || addGoalCreating}
+          >
+            {addGoalCreating ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <Text style={styles.addGoalSubmitBtnText}>Add Goal</Text>
+            )}
+          </TouchableOpacity>
+        </BottomSheetView>
+      </BottomSheetModal>
     </SafeAreaView>
   );
 };
@@ -629,6 +1088,245 @@ const styles = StyleSheet.create({
   headerRight: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 8,
+  },
+  iconButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  dailyScoreCard: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: 'rgba(44,44,44,1)',
+    borderRadius: 20,
+    padding: 20,
+    marginBottom: 24,
+  },
+  dailyScoreLeft: {
+    flex: 1,
+  },
+  dailyScoreHeader: {
+    marginBottom: 6,
+  },
+  dailyScoreTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    letterSpacing: 1,
+  },
+  dailyScoreDesc: {
+    fontSize: 14,
+    color: 'rgba(255,255,255,0.9)',
+    marginBottom: 14,
+    width: '80%',
+  },
+  addGoalButton: {
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 12,
+  },
+  addGoalText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: 'rgba(255,255,255,0.9)',
+  },
+  dailyScoreGaugeWrap: {
+    width: 120,
+    height: 88,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  dailyScoreGaugeHelp: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 2,
+  },
+  dailyScoreGaugeArc: {
+    position: 'absolute',
+    top: 0,
+    left: 10,
+    width: 100,
+    height: 50,
+    overflow: 'hidden',
+    backgroundColor: 'transparent',
+  },
+  dailyScoreGaugeArcOutline: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    borderWidth: 6,
+    borderColor: 'rgba(255,255,255,0.25)',
+    backgroundColor: 'transparent',
+  },
+  dailyScoreGaugeArcFillWrap: {
+    width: 100,
+    height: 100,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+  },
+  dailyScoreGaugeArcFill: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: 'rgba(255,255,255,0.5)',
+    position: 'absolute',
+    top: 0,
+    left: 0,
+  },
+  dailyScoreGaugeArcFillMask: {
+    position: 'absolute',
+    top: 50,
+    left: 0,
+    width: 100,
+    height: 50,
+    backgroundColor: 'rgba(44,44,44,1)',
+  },
+  dailyScoreValue: {
+    fontSize: 32,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    marginTop: 12,
+  },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#FFFFFF',
+    marginBottom: 12,
+  },
+  filterPillsScroll: {
+    marginBottom: 16,
+  },
+  filterPillsContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingRight: 16,
+  },
+  filterPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 20,
+    gap: 6,
+  },
+  filterPillActive: {
+    backgroundColor: 'rgba(124,58,237,0.4)',
+  },
+  filterPillText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#FFFFFF',
+  },
+  filterPillAdd: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  dateGroup: {
+    marginBottom: 20,
+  },
+  dateGroupLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: 'rgba(255,255,255,0.5)',
+    marginBottom: 10,
+  },
+  conversationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 8,
+  },
+  conversationRowIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  conversationRowContent: {
+    flex: 1,
+  },
+  conversationRowTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#FFFFFF',
+    marginBottom: 2,
+  },
+  conversationRowMeta: {
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.5)',
+  },
+  mainScroll: {
+    flex: 1,
+  },
+  mainScrollContent: {
+    // paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 120,
+  },
+  bottomSpacer: {
+    height: 24,
+  },
+  fabContainer: {
+    position: 'absolute',
+    bottom: 24,
+    right: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  fabAskOmi: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(124,58,237,0.9)',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 24,
+    gap: 8,
+  },
+  fabAskOmiText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  fabMic: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#7C3AED',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  fabMicActive: {
+    backgroundColor: 'rgba(255,58,58,0.9)',
   },
   deviceStatusContainer: {
     flexDirection: 'row',
@@ -902,6 +1600,216 @@ const styles = StyleSheet.create({
     color: 'rgba(255,255,255,0.3)',
     fontSize: 14,
     marginTop: 8,
+  },
+  scoreBreakdownSheetBg: {
+    backgroundColor: 'rgba(36,36,36,1)',
+  },
+  scoreBreakdownSheetHandle: {
+    backgroundColor: 'rgba(255,255,255,0.35)',
+  },
+  scoreBreakdownSheetContent: {
+    paddingHorizontal: 24,
+    paddingBottom: Platform.OS === 'ios' ? 34 : 24,
+  },
+  scoreBreakdownTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    textAlign: 'center',
+    marginBottom: 24,
+  },
+  scoreBreakdownRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.08)',
+  },
+  scoreBreakdownLabel: {
+    fontSize: 16,
+    color: 'rgba(255,255,255,0.9)',
+  },
+  scoreBreakdownValue: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  scoreBreakdownLoader: {
+    marginVertical: 16,
+  },
+  scoreBreakdownHowItWorks: {
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderRadius: 12,
+    padding: 16,
+    marginTop: 24,
+  },
+  scoreBreakdownHowTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    marginBottom: 8,
+  },
+  scoreBreakdownHowText: {
+    fontSize: 14,
+    color: 'rgba(255,255,255,0.8)',
+    lineHeight: 20,
+  },
+  scoreBreakdownGotIt: {
+    alignSelf: 'center',
+    marginTop: 24,
+    paddingVertical: 12,
+    paddingHorizontal: 32,
+  },
+  scoreBreakdownGotItText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  newFolderSheetBg: {
+    backgroundColor: 'rgba(36,36,36,1)',
+  },
+  newFolderSheetHandle: {
+    backgroundColor: 'rgba(255,255,255,0.35)',
+  },
+  newFolderSheetContent: {
+    paddingHorizontal: 24,
+    paddingBottom: Platform.OS === 'ios' ? 34 : 24,
+  },
+  newFolderSheetHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  newFolderSheetTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  newFolderCreateBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+  },
+  newFolderCreateBtnText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#A855F7',
+  },
+  newFolderCreateBtnTextDisabled: {
+    color: 'rgba(168,85,247,0.5)',
+  },
+  newFolderInput: {
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    fontSize: 16,
+    color: '#FFFFFF',
+    marginBottom: 12,
+  },
+  newFolderInputSecond: {
+    marginBottom: 24,
+  },
+  newFolderSectionLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: 'rgba(255,255,255,0.9)',
+    marginBottom: 12,
+  },
+  newFolderIconsScroll: {
+    marginBottom: 20,
+  },
+  newFolderIconsContent: {
+    flexDirection: 'row',
+    gap: 12,
+    paddingRight: 24,
+  },
+  newFolderIconBtn: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  newFolderIconBtnSelected: {
+    backgroundColor: 'rgba(59,130,246,0.6)',
+    borderWidth: 2,
+    borderColor: '#3B82F6',
+  },
+  newFolderColorsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 14,
+  },
+  newFolderColorBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  addGoalSheetBg: {
+    backgroundColor: 'rgba(36,36,36,1)',
+  },
+  addGoalSheetHandle: {
+    backgroundColor: 'rgba(255,255,255,0.35)',
+  },
+  addGoalSheetContent: {
+    paddingHorizontal: 24,
+    paddingBottom: Platform.OS === 'ios' ? 34 : 24,
+  },
+  addGoalSheetTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  addGoalInput: {
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    fontSize: 16,
+    color: '#FFFFFF',
+    marginBottom: 16,
+  },
+  addGoalRow: {
+    flexDirection: 'row',
+    gap: 16,
+    marginBottom: 24,
+  },
+  addGoalFieldWrap: {
+    flex: 1,
+  },
+  addGoalLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: 'rgba(255,255,255,0.8)',
+    marginBottom: 8,
+  },
+  addGoalInputSmall: {
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    fontSize: 16,
+    color: '#FFFFFF',
+  },
+  addGoalSubmitBtn: {
+    backgroundColor: '#22C55E',
+    borderRadius: 12,
+    paddingVertical: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 52,
+  },
+  addGoalSubmitBtnText: {
+    fontSize: 17,
+    fontWeight: '600',
+    color: '#FFFFFF',
   },
 });
 
